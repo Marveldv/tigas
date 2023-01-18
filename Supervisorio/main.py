@@ -15,9 +15,26 @@ from kivy_garden.graph import Graph
 from kivy_garden.graph import LinePlot
 from timeseriesgraph import TimeSeriesGraph 
 from lib import Soft,Inversor,Direta
+from datetime import datetime
 
 class MyWidget(MDScreen):
-    
+
+    IP = '192.168.0.13'
+    Port = 502
+
+    #Constantes
+    Driver = 1324 #Indereço do Driver
+    DriverI= 3 #Valor inicial do Driver
+
+    _UpdateWidgets = True
+
+    Seguranca = True
+
+    Soft = 1316  #Partida Soft
+    Inver = 1312 #Partida Inversa
+    Direta = 1319 #Partida direta
+
+    _Escrita = {}
     
     Endereços = {'Temperatura_R':{'addr':700,'tag':'FP','Div':10},
              'Temperatura_S':{'addr':702,'tag':'FP','Div':10},         
@@ -49,11 +66,15 @@ class MyWidget(MDScreen):
         self.Direta = Direta()
         self._meas = {}
         self.inicio = False
+
+        self.ids.hostname.text = self.IP
+        self.ids.port.text = self.Port
         
     def lerdado(self,tipo):
         """
         Método para leitura de um dado da Tabela MODBUS
         """
+        self._meas['timestamp'] = datetime.now()
         for key,value in self.Endereços.items():
             if value[key]['tag'] == 'HR':
                 self._meas[key]=self._modbusClient.read_holding_registers(value[key]['addr'],1)[0]/value[key]['Div']
@@ -67,8 +88,8 @@ class MyWidget(MDScreen):
         """
         Método para escrita de um dado da Tabela MODBUS
         """
-        # addr=int(self.ids.addr2)
-        # pass
+        for key, value in self._Escrita.items():
+            self._modbusClient.write_single_register(int(key),value[key])
         
        
             
@@ -76,13 +97,41 @@ class MyWidget(MDScreen):
         """
         Metodo para conectar em um servidor ModBus
         """
-        pass
+        self._modbusClient.port = self.ids.hostname.text
+        self._modbusClient.host = int(self.ids.port.text)
+        try:
+            self._modbusClient.open()
+            if self._modbusClient.is_open:
+                self.updateThread = Thread(target=self.updater)
+                self._modbusClient.write_single_register(self.Driver,self.DriverI)
+                self.updateThread.start()
+            else:
+                print("Error 1: Falha na Conexao")
+        except Exception as e:
+            print("Error 2: ",e.args)
     
     def updater(self):
         """
         Metodo que repete as funções para uma função continua
         """
-        pass
+        try:
+            while self._UpdateWidgets:
+                self.lerdado()
+                self.UpdadteGUI()
+                self.escreverdado()
+                sleep(1)
+
+        except Exception as e:
+            print("Error 3: ",e.args)
+            self.conectar()
+
+    def UpdadteGUI(self):
+        #Atualiza as Labels
+        for key, value in self.Endereços.items():
+            self.ids[key].text = str(round(self._meas[key],2))
+
+        #Atualiza o grafico
+        self.ids.graph.updateGraph((self._meas['timestamp'],self._meas['Porcentagem do reservatorio']),0)
     
     def alternar(self):
         if self.inicio == True:
@@ -90,6 +139,7 @@ class MyWidget(MDScreen):
                 self.ids.ligar.text= "Desligar"
             else:
                 self.ids.ligar.text= "Ligar"
+
             
     def modo_init(self,modo):
         self.inicio = True
@@ -99,7 +149,44 @@ class MyWidget(MDScreen):
         if modo == 2:
             self.ids.modo_init.add_widget(self.Inversor)
         if modo == 3:
-            self.ids.modo_init.add_widget(self.Direta)  
+            self.ids.modo_init.add_widget(self.Direta)
+
+    def Partida(self): #da a partida do motor
+        try:
+            if self.ids.ST.text == "START":
+                self.ids.ST.text = "STOP"
+                self.Seguranca = False
+                if self.Start == 1:
+                    self._Escrita[str(self.Soft)] = 1
+                    self._Escrita[str(self.Inver)] = 0
+                    self._Escrita[str(self.Direta)] = 0
+                elif self.Start == 2:
+                    self._Escrita[str(self.Inver)] = 1
+                    self._Escrita[str(self.Soft)] = 0
+                    self._Escrita[str(self.Direta)] = 0
+                elif self.Start == 3:
+                    self._Escrita[str(self.Direta)] = 1
+                    self._Escrita[str(self.Soft)] = 0
+                    self._Escrita[str(self.Inver)] = 0
+                else:
+                    self._Escrita[str(self.Soft)] = 0
+                    self._Escrita[str(self.Inver)] = 0
+                    self._Escrita[str(self.Direta)] = 0
+                    self.Seguranca = True
+
+            else:
+                self.ids.ST.text = "START"
+                self._Escrita[str(self.Soft)] = 0
+                self._Escrita[str(self.Inver)] = 0
+                self._Escrita[str(self.Direta)] = 0
+                self.Seguranca = True
+        except Exception as e:
+            print("Error 4: ",e.args) 
+    
+    def On_Start(self,Start):
+        if self.Seguranca:
+            self.Start = Start
+            self._modbusClient.write_single_register(self.Driver,self.Start)
         
 class BasicApp(MDApp):
     def build(self):
@@ -115,4 +202,5 @@ class Tab(MDFloatLayout,MDTabsBase):
 if __name__ == "__main__":
     Builder.load_string(open("mywidget.kv",encoding="utf-8").read(),rulesonly=True)
     BasicApp().run()
+    
     
